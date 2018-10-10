@@ -26,7 +26,6 @@
 #include "distributed/multi_router_planner.h"
 #include "distributed/multi_resowner.h"
 #include "distributed/multi_server_executor.h"
-#include "distributed/multi_utility.h"
 #include "distributed/resource_lock.h"
 #include "distributed/worker_protocol.h"
 #include "executor/execdebug.h"

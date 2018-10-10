@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
  *
- * multi_utility.h
+ * utility_hook.h
  *	  Citus utility hook and related functionality.
  *
  * Copyright (c) 2012-2016, Citus Data, Inc.
@@ -13,7 +13,7 @@
 #include "tcop/utility.h"
 
 extern bool EnableDDLPropagation;
-extern bool EnableVersionChecks;
+
 
 /*
  * A DDLJob encapsulates the remote tasks and commands needed to process all or
@@ -44,14 +44,9 @@ extern void multi_ProcessUtility9x(Node *parsetree, const char *queryString,
 extern void CitusProcessUtility(Node *node, const char *queryString,
 								ProcessUtilityContext context, ParamListInfo params,
 								DestReceiver *dest, char *completionTag);
-extern List * PlanGrantStmt(GrantStmt *grantStmt);
 extern void ErrorIfUnsupportedConstraint(Relation relation, char distributionMethod,
 										 Var *distributionColumn, uint32 colocationId);
 
-extern Datum master_drop_all_shards(PG_FUNCTION_ARGS);
-extern Datum master_modify_multiple_shards(PG_FUNCTION_ARGS);
-
-extern List * DDLTaskList(Oid relationId, const char *commandString);
 extern const char * RoleSpecString(RoleSpec *spec);
 
 #endif /* MULTI_UTILITY_H */

@@ -1,8 +1,27 @@
 /*-------------------------------------------------------------------------
- * multi_utility.c
+ * utility_hook.c
  *	  Citus utility hook and related functionality.
  *
- * Copyright (c) 2012-2016, Citus Data, Inc.
+ * The utility hook is called by PostgreSQL when processing any command
+ * that is not SELECT, UPDATE, DELETE, INSERT, in place of the regular
+ * ProcessUtility function. We use this primarily to implement (or in
+ * some cases prevent) DDL commands and COPY on distributed tables.
+ *
+ * For DDL commands that affect distributed tables, we check whether
+ * they are valid (and implemented) for the distributed table and then
+ * propagate the command to all shards and, in case of MX, to distributed
+ * tables on other nodes. We still call the original ProcessUtility
+ * function to apply catalog changes on the coordinator.
+ *
+ * For COPY into a distributed table, we provide an alternative
+ * implementation in ProcessCopyStmt that sends rows to shards based
+ * on their distribution column value instead of writing it to the local
+ * table on the coordinator. For COPY from a distributed table, we
+ * replace the table with a SELECT * FROM table and pass it back to
+ * ProcessUtility, which will plan the query via the distributed planner
+ * hook.
+ *
+ * Copyright (c) 2012-2018, Citus Data, Inc.
  *-------------------------------------------------------------------------
  */
 
@@ -48,7 +67,7 @@
 #include "distributed/multi_router_executor.h"
 #include "distributed/multi_router_planner.h"
 #include "distributed/multi_shard_transaction.h"
-#include "distributed/multi_utility.h" /* IWYU pragma: keep */
+#include "distributed/utility_hook.h" /* IWYU pragma: keep */
 #include "distributed/pg_dist_partition.h"
 #include "distributed/policy.h"
 #include "distributed/reference_table_utils.h"
@@ -170,6 +189,7 @@ static bool AlterInvolvesPartitionColumn(AlterTableStmt *alterTableStatement,
 static void ExecuteDistributedDDLJob(DDLJob *ddlJob);
 static char * SetSearchPathToCurrentSearchPathCommand(void);
 static char * CurrentSearchPath(void);
+static List * DDLTaskList(Oid relationId, const char *commandString);
 static List * CreateIndexTaskList(Oid relationId, IndexStmt *indexStmt);
 static List * DropIndexTaskList(Oid relationId, Oid indexId, DropStmt *dropStmt);
 static List * InterShardDDLTaskList(Oid leftRelationId, Oid rightRelationId,
@@ -179,6 +199,7 @@ static void RangeVarCallbackForDropIndex(const RangeVar *rel, Oid relOid, Oid ol
 static void CheckCopyPermissions(CopyStmt *copyStatement);
 static List * CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist);
 static void PostProcessUtility(Node *parsetree);
+extern List * PlanGrantStmt(GrantStmt *grantStmt);
 static List * CollectGrantTableIdList(GrantStmt *grantStmt);
 static char * GetSchemaNameFromDropObject(ListCell *dropSchemaCell);
 static void ProcessDropTableStmt(DropStmt *dropTableStatement);

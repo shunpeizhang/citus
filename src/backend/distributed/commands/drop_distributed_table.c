@@ -14,7 +14,7 @@
 #include "distributed/master_metadata_utility.h"
 #include "distributed/master_protocol.h"
 #include "distributed/metadata_sync.h"
-#include "distributed/multi_utility.h"
+#include "distributed/utility_hook.h"
 #include "distributed/worker_transaction.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
