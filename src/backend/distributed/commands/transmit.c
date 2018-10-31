@@ -411,31 +411,3 @@ VerifyTransmitStmt(CopyStmt *copyStatement)
 				       " or PROGRAM parameters ")));
 	}
 }
-
-
-/*
- * IsCopyResultStmt determines whether the given copy statement is a
- * COPY "resultkey" FROM STDIN WITH (format result) statement, which is used
- * to copy query results from the coordinator into workers.
- */
-bool
-IsCopyResultStmt(CopyStmt *copyStatement)
-{
-	ListCell *optionCell = NULL;
-	bool hasFormatReceive = false;
-
-	/* extract WITH (...) options from the COPY statement */
-	foreach(optionCell, copyStatement->options)
-	{
-		DefElem *defel = (DefElem *) lfirst(optionCell);
-
-		if (strncmp(defel->defname, "format", NAMEDATALEN) == 0 &&
-		    strncmp(defGetString(defel), "result", NAMEDATALEN) == 0)
-		{
-			hasFormatReceive = true;
-			break;
-		}
-	}
-
-	return hasFormatReceive;
-}
