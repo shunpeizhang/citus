@@ -132,11 +132,6 @@ struct DropRelationCallbackState
 /* Local functions forward declarations for deciding when to perform processing/checks */
 static bool IsCitusExtensionStmt(Node *parsetree);
 
-/* Local functions forward declarations for Transmit statement */
-static bool IsTransmitStmt(Node *parsetree);
-static void VerifyTransmitStmt(CopyStmt *copyStatement);
-static bool IsCopyResultStmt(CopyStmt *copyStatement);
-
 /* Local functions forward declarations for processing distributed table commands */
 static Node * ProcessCopyStmt(CopyStmt *copyStatement, char *completionTag,
 							  bool *commandMustRunAsOwner);
@@ -902,114 +897,6 @@ IsCitusExtensionStmt(Node *parsetree)
 	}
 
 	return (strcmp(extensionName, "citus") == 0);
-}
-
-
-/* Is the passed in statement a transmit statement? */
-static bool
-IsTransmitStmt(Node *parsetree)
-{
-	if (IsA(parsetree, CopyStmt))
-	{
-		CopyStmt *copyStatement = (CopyStmt *) parsetree;
-		ListCell *optionCell = NULL;
-
-		/* Extract options from the statement node tree */
-		foreach(optionCell, copyStatement->options)
-		{
-			DefElem *defel = (DefElem *) lfirst(optionCell);
-
-			if (strncmp(defel->defname, "format", NAMEDATALEN) == 0 &&
-				strncmp(defGetString(defel), "transmit", NAMEDATALEN) == 0)
-			{
-				return true;
-			}
-		}
-	}
-
-	return false;
-}
-
-
-/*
- * VerifyTransmitStmt checks that the passed in command is a valid transmit
- * statement. Raise ERROR if not.
- *
- * Note that only 'toplevel' options in the CopyStmt struct are checked, and
- * that verification of the target files existance is not done here.
- */
-static void
-VerifyTransmitStmt(CopyStmt *copyStatement)
-{
-	char *fileName = NULL;
-
-	EnsureSuperUser();
-
-	/* do some minimal option verification */
-	if (copyStatement->relation == NULL ||
-		copyStatement->relation->relname == NULL)
-	{
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("FORMAT 'transmit' requires a target file")));
-	}
-
-	fileName = copyStatement->relation->relname;
-
-	if (is_absolute_path(fileName))
-	{
-		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-						(errmsg("absolute path not allowed"))));
-	}
-	else if (!path_is_relative_and_below_cwd(fileName))
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("path must be in or below the current directory"))));
-	}
-
-	if (copyStatement->filename != NULL)
-	{
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("FORMAT 'transmit' only accepts STDIN/STDOUT"
-							   " as input/output")));
-	}
-
-	if (copyStatement->query != NULL ||
-		copyStatement->attlist != NULL ||
-		copyStatement->is_program)
-	{
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("FORMAT 'transmit' does not accept query, attribute list"
-							   " or PROGRAM parameters ")));
-	}
-}
-
-
-/*
- * IsCopyResultStmt determines whether the given copy statement is a
- * COPY "resultkey" FROM STDIN WITH (format result) statement, which is used
- * to copy query results from the coordinator into workers.
- */
-static bool
-IsCopyResultStmt(CopyStmt *copyStatement)
-{
-	ListCell *optionCell = NULL;
-	bool hasFormatReceive = false;
-
-	/* extract WITH (...) options from the COPY statement */
-	foreach(optionCell, copyStatement->options)
-	{
-		DefElem *defel = (DefElem *) lfirst(optionCell);
-
-		if (strncmp(defel->defname, "format", NAMEDATALEN) == 0 &&
-			strncmp(defGetString(defel), "result", NAMEDATALEN) == 0)
-		{
-			hasFormatReceive = true;
-			break;
-		}
-	}
-
-	return hasFormatReceive;
 }
 
 
