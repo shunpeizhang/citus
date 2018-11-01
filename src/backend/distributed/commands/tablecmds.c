@@ -12,7 +12,9 @@
 
 #include "catalog/namespace.h"
 #include "catalog/pg_class.h"
+#include "commands/tablecmds.h"
 #include "distributed/citus_ruleutils.h"
+#include "distributed/commands/common.h"
 #include "distributed/commands/tablecmds.h"
 #include "distributed/distributed_planner.h"
 #include "distributed/foreign_constraint.h"
@@ -25,7 +27,6 @@
 #include "distributed/reference_table_utils.h"
 #include "distributed/resource_lock.h"
 #include "distributed/transaction_management.h"
-#include "distributed/utility_hook.h"
 #include "nodes/parsenodes.h"
 #include "storage/lmgr.h"
 #include "utils/lsyscache.h"

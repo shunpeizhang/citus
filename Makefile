@@ -5,6 +5,7 @@ EXTENSION = citus
 MODULE_big = citus
 
 OBJS = src/backend/distributed/shared_library_init.o \
+     src/backend/distributed/commands/common.o \
      src/backend/distributed/commands/create_distributed_table.o \
      src/backend/distributed/commands/drop_distributed_table.o \
      src/backend/distributed/commands/indexcmds.o \
