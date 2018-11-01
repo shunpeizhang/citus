@@ -9,6 +9,7 @@ OBJS = src/backend/distributed/shared_library_init.o \
      src/backend/distributed/commands/drop_distributed_table.o \
      src/backend/distributed/commands/indexcmds.o \
      src/backend/distributed/commands/multi_copy.o \
+     src/backend/distributed/commands/schemacmds.o \
      src/backend/distributed/commands/sequence.o \
      src/backend/distributed/commands/tablecmds.o \
      src/backend/distributed/commands/transmit.o \
