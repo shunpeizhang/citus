@@ -2455,7 +2455,7 @@ IsCopyResultStmt(CopyStmt *copyStatement)
 		DefElem *defel = (DefElem *) lfirst(optionCell);
 
 		if (strncmp(defel->defname, "format", NAMEDATALEN) == 0 &&
-		    strncmp(defGetString(defel), "result", NAMEDATALEN) == 0)
+			strncmp(defGetString(defel), "result", NAMEDATALEN) == 0)
 		{
 			hasFormatReceive = true;
 			break;
@@ -2530,7 +2530,7 @@ ProcessCopyStmt(CopyStmt *copyStatement, char *completionTag, bool *commandMustR
 
 			/* consider using RangeVarGetRelidExtended to check perms before locking */
 			copiedRelation = heap_openrv(copyStatement->relation,
-			                             isFrom ? RowExclusiveLock : AccessShareLock);
+										 isFrom ? RowExclusiveLock : AccessShareLock);
 
 			isDistributedRelation = IsDistributedTable(RelationGetRelid(copiedRelation));
 
@@ -2623,8 +2623,8 @@ ProcessCopyStmt(CopyStmt *copyStatement, char *completionTag, bool *commandMustR
 			 * convert relative paths to absolute ones here.
 			 */
 			if (copyStatement->relation == NULL &&
-			    !copyStatement->is_from &&
-			    !is_absolute_path(filename))
+				!copyStatement->is_from &&
+				!is_absolute_path(filename))
 			{
 				copyStatement->filename = make_absolute_path(filename);
 			}
@@ -2669,7 +2669,7 @@ CreateLocalTable(RangeVar *relation, char *nodeName, int32 nodePort)
 		bool applyDDLCommand = false;
 
 		if (IsA(ddlCommandNode, CreateStmt) ||
-		    IsA(ddlCommandNode, CreateForeignTableStmt))
+			IsA(ddlCommandNode, CreateForeignTableStmt))
 		{
 			CreateStmt *createStatement = (CreateStmt *) ddlCommandNode;
 
@@ -2685,7 +2685,7 @@ CreateLocalTable(RangeVar *relation, char *nodeName, int32 nodePort)
 		else if (IsA(ddlCommandNode, CreateForeignServerStmt))
 		{
 			CreateForeignServerStmt *createServerStmt =
-					(CreateForeignServerStmt *) ddlCommandNode;
+				(CreateForeignServerStmt *) ddlCommandNode;
 			if (GetForeignServerByName(createServerStmt->servername, true) == NULL)
 			{
 				/* create server if not exists */
@@ -2699,16 +2699,16 @@ CreateLocalTable(RangeVar *relation, char *nodeName, int32 nodePort)
 		else if ((IsA(ddlCommandNode, CreateSeqStmt)))
 		{
 			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					errmsg("cannot copy to table with serial column from worker"),
-					errhint("Connect to the master node to COPY to tables which "
-					        "use serial column types.")));
+							errmsg("cannot copy to table with serial column from worker"),
+							errhint("Connect to the master node to COPY to tables which "
+									"use serial column types.")));
 		}
 
 		/* run only a selected set of DDL commands */
 		if (applyDDLCommand)
 		{
 			CitusProcessUtility(ddlCommandNode, CreateCommandTag(ddlCommandNode),
-			                    PROCESS_UTILITY_TOPLEVEL, NULL, None_Receiver, NULL);
+								PROCESS_UTILITY_TOPLEVEL, NULL, None_Receiver, NULL);
 
 			CommandCounterIncrement();
 		}
