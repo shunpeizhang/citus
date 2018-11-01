@@ -8,6 +8,7 @@ OBJS = src/backend/distributed/shared_library_init.o \
      src/backend/distributed/commands/create_distributed_table.o \
      src/backend/distributed/commands/drop_distributed_table.o \
      src/backend/distributed/commands/multi_copy.o \
+     src/backend/distributed/commands/sequence.o \
      src/backend/distributed/commands/transmit.o \
      src/backend/distributed/connection/connection_configuration.o \
      src/backend/distributed/connection/connection_management.o \

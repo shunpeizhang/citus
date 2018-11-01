@@ -52,6 +52,7 @@
 #include "commands/prepare.h"
 #include "distributed/citus_ruleutils.h"
 #include "distributed/colocation_utils.h"
+#include "distributed/commands/sequence.h"
 #include "distributed/foreign_constraint.h"
 #include "distributed/intermediate_results.h"
 #include "distributed/listutils.h"
@@ -157,15 +158,12 @@ static void ErrorIfUnsupportedDropIndexStmt(DropStmt *dropIndexStatement);
 static void ErrorIfUnsupportedAlterTableStmt(AlterTableStmt *alterTableStatement);
 static void ErrorIfUnsupportedAlterIndexStmt(AlterTableStmt *alterTableStatement);
 static void ErrorIfAlterDropsPartitionColumn(AlterTableStmt *alterTableStatement);
-static void ErrorIfUnsupportedSeqStmt(CreateSeqStmt *createSeqStmt);
-static void ErrorIfDistributedAlterSeqOwnedBy(AlterSeqStmt *alterSeqStmt);
 static void ErrorIfUnsupportedTruncateStmt(TruncateStmt *truncateStatement);
 static void ProcessTruncateStatement(TruncateStmt *truncateStatement);
 static void ExecuteTruncateStmtSequentialIfNecessary(TruncateStmt *command);
 static void EnsurePartitionTableNotReplicatedForTruncate(TruncateStmt *truncateStatement);
 static void LockTruncatedRelationMetadataInWorkers(TruncateStmt *truncateStatement);
 static void AcquireDistributedLockOnRelations(List *relationIdList, LOCKMODE lockMode);
-static bool OptionsSpecifyOwnedBy(List *optionList, Oid *ownedByTableId);
 static void ErrorIfUnsupportedRenameStmt(RenameStmt *renameStmt);
 static void ErrorIfUnsupportedAlterAddConstraintStmt(AlterTableStmt *alterTableStatement);
 
@@ -2554,92 +2552,6 @@ ErrorIfUnsupportedConstraint(Relation relation, char distributionMethod,
 
 
 /*
- * ErrorIfUnsupportedSeqStmt errors out if the provided create sequence
- * statement specifies a distributed table in its OWNED BY clause.
- */
-static void
-ErrorIfUnsupportedSeqStmt(CreateSeqStmt *createSeqStmt)
-{
-	Oid ownedByTableId = InvalidOid;
-
-	/* create is easy: just prohibit any distributed OWNED BY */
-	if (OptionsSpecifyOwnedBy(createSeqStmt->options, &ownedByTableId))
-	{
-		if (IsDistributedTable(ownedByTableId))
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("cannot create sequences that specify a distributed "
-								   "table in their OWNED BY option"),
-							errhint("Use a sequence in a distributed table by specifying "
-									"a serial column type before creating any shards.")));
-		}
-	}
-}
-
-
-/*
- * ErrorIfDistributedAlterSeqOwnedBy errors out if the provided alter sequence
- * statement attempts to change the owned by property of a distributed sequence
- * or attempt to change a local sequence to be owned by a distributed table.
- */
-static void
-ErrorIfDistributedAlterSeqOwnedBy(AlterSeqStmt *alterSeqStmt)
-{
-	Oid sequenceId = RangeVarGetRelid(alterSeqStmt->sequence, AccessShareLock,
-									  alterSeqStmt->missing_ok);
-	bool sequenceOwned = false;
-	Oid ownedByTableId = InvalidOid;
-	Oid newOwnedByTableId = InvalidOid;
-	int32 ownedByColumnId = 0;
-	bool hasDistributedOwner = false;
-
-	/* alter statement referenced nonexistent sequence; return */
-	if (sequenceId == InvalidOid)
-	{
-		return;
-	}
-
-#if (PG_VERSION_NUM >= 100000)
-	sequenceOwned = sequenceIsOwned(sequenceId, DEPENDENCY_AUTO, &ownedByTableId,
-									&ownedByColumnId);
-	if (!sequenceOwned)
-	{
-		sequenceOwned = sequenceIsOwned(sequenceId, DEPENDENCY_INTERNAL, &ownedByTableId,
-										&ownedByColumnId);
-	}
-#else
-	sequenceOwned = sequenceIsOwned(sequenceId, &ownedByTableId, &ownedByColumnId);
-#endif
-
-	/* see whether the sequence is already owned by a distributed table */
-	if (sequenceOwned)
-	{
-		hasDistributedOwner = IsDistributedTable(ownedByTableId);
-	}
-
-	if (OptionsSpecifyOwnedBy(alterSeqStmt->options, &newOwnedByTableId))
-	{
-		/* if a distributed sequence tries to change owner, error */
-		if (hasDistributedOwner && ownedByTableId != newOwnedByTableId)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("cannot alter OWNED BY option of a sequence "
-								   "already owned by a distributed table")));
-		}
-		else if (!hasDistributedOwner && IsDistributedTable(newOwnedByTableId))
-		{
-			/* and don't let local sequences get a distributed OWNED BY */
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("cannot associate an existing sequence with a "
-								   "distributed table"),
-							errhint("Use a sequence in a distributed table by specifying "
-									"a serial column type before creating any shards.")));
-		}
-	}
-}
-
-
-/*
  * ErrorIfUnsupportedTruncateStmt errors out if the command attempts to
  * truncate a distributed foreign table.
  */
@@ -2882,53 +2794,6 @@ AcquireDistributedLockOnRelations(List *relationIdList, LOCKMODE lockMode)
 			}
 		}
 	}
-}
-
-
-/*
- * OptionsSpecifyOwnedBy processes the options list of either a CREATE or ALTER
- * SEQUENCE command, extracting the first OWNED BY option it encounters. The
- * identifier for the specified table is placed in the Oid out parameter before
- * returning true. Returns false if no such option is found. Still returns true
- * for OWNED BY NONE, but leaves the out paramter set to InvalidOid.
- */
-static bool
-OptionsSpecifyOwnedBy(List *optionList, Oid *ownedByTableId)
-{
-	ListCell *optionCell = NULL;
-
-	foreach(optionCell, optionList)
-	{
-		DefElem *defElem = (DefElem *) lfirst(optionCell);
-		if (strcmp(defElem->defname, "owned_by") == 0)
-		{
-			List *ownedByNames = defGetQualifiedName(defElem);
-			int nameCount = list_length(ownedByNames);
-
-			/* if only one name is present, this is OWNED BY NONE */
-			if (nameCount == 1)
-			{
-				*ownedByTableId = InvalidOid;
-				return true;
-			}
-			else
-			{
-				/*
-				 * Otherwise, we have a list of schema, table, column, which we
-				 * need to truncate to simply the schema and table to determine
-				 * the relevant relation identifier.
-				 */
-				List *relNameList = list_truncate(list_copy(ownedByNames), nameCount - 1);
-				RangeVar *rangeVar = makeRangeVarFromNameList(relNameList);
-				bool failOK = true;
-
-				*ownedByTableId = RangeVarGetRelid(rangeVar, NoLock, failOK);
-				return true;
-			}
-		}
-	}
-
-	return false;
 }
 
 
