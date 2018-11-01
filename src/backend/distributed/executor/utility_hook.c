@@ -120,8 +120,6 @@ static bool IsCitusExtensionStmt(Node *parsetree);
 /* Local functions forward declarations for processing distributed table commands */
 static void ProcessCreateTableStmtPartitionOf(CreateStmt *createStatement);
 static void ProcessAlterTableStmtAttachPartition(AlterTableStmt *alterTableStatement);
-static List * PlanIndexStmt(IndexStmt *createIndexStatement,
-							const char *createIndexCommand);
 static List * PlanAlterTableStmt(AlterTableStmt *alterTableStatement,
 								 const char *alterTableCommand);
 static List * PlanRenameStmt(RenameStmt *renameStmt, const char *renameCommand);
@@ -138,7 +136,6 @@ static char * DeparseVacuumColumnNames(List *columnNameList);
 
 /* Local functions forward declarations for unsupported command checks */
 static void ErrorIfUnstableCreateOrAlterExtensionStmt(Node *parsetree);
-static void ErrorIfUnsupportedIndexStmt(IndexStmt *createIndexStatement);
 static void ErrorIfUnsupportedAlterTableStmt(AlterTableStmt *alterTableStatement);
 static void ErrorIfUnsupportedAlterIndexStmt(AlterTableStmt *alterTableStatement);
 static void ErrorIfAlterDropsPartitionColumn(AlterTableStmt *alterTableStatement);
@@ -155,7 +152,6 @@ static void ExecuteDistributedDDLJob(DDLJob *ddlJob);
 static char * SetSearchPathToCurrentSearchPathCommand(void);
 static char * CurrentSearchPath(void);
 static List * DDLTaskList(Oid relationId, const char *commandString);
-static List * CreateIndexTaskList(Oid relationId, IndexStmt *indexStmt);
 static List * InterShardDDLTaskList(Oid leftRelationId, Oid rightRelationId,
 									const char *commandString);
 static void PostProcessUtility(Node *parsetree);
@@ -1004,99 +1000,6 @@ ProcessAlterTableStmtAttachPartition(AlterTableStmt *alterTableStatement)
 
 
 /*
- * PlanIndexStmt determines whether a given CREATE INDEX statement involves
- * a distributed table. If so (and if the statement does not use unsupported
- * options), it modifies the input statement to ensure proper execution against
- * the master node table and creates a DDLJob to encapsulate information needed
- * during the worker node portion of DDL execution before returning that DDLJob
- * in a List. If no distributed table is involved, this function returns NIL.
- */
-static List *
-PlanIndexStmt(IndexStmt *createIndexStatement, const char *createIndexCommand)
-{
-	List *ddlJobs = NIL;
-
-	/*
-	 * We first check whether a distributed relation is affected. For that, we need to
-	 * open the relation. To prevent race conditions with later lookups, lock the table,
-	 * and modify the rangevar to include the schema.
-	 */
-	if (createIndexStatement->relation != NULL)
-	{
-		Relation relation = NULL;
-		Oid relationId = InvalidOid;
-		bool isDistributedRelation = false;
-		char *namespaceName = NULL;
-		LOCKMODE lockmode = ShareLock;
-		MemoryContext relationContext = NULL;
-
-		/*
-		 * We don't support concurrently creating indexes for distributed
-		 * tables, but till this point, we don't know if it is a regular or a
-		 * distributed table.
-		 */
-		if (createIndexStatement->concurrent)
-		{
-			lockmode = ShareUpdateExclusiveLock;
-		}
-
-		/*
-		 * XXX: Consider using RangeVarGetRelidExtended with a permission
-		 * checking callback. Right now we'll acquire the lock before having
-		 * checked permissions, and will only fail when executing the actual
-		 * index statements.
-		 */
-		relation = heap_openrv(createIndexStatement->relation, lockmode);
-		relationId = RelationGetRelid(relation);
-
-		isDistributedRelation = IsDistributedTable(relationId);
-
-		/*
-		 * Before we do any further processing, fix the schema name to make sure
-		 * that a (distributed) table with the same name does not appear on the
-		 * search path in front of the current schema. We do this even if the
-		 * table is not distributed, since a distributed table may appear on the
-		 * search path by the time postgres starts processing this statement.
-		 */
-		namespaceName = get_namespace_name(RelationGetNamespace(relation));
-
-		/* ensure we copy string into proper context */
-		relationContext = GetMemoryChunkContext(createIndexStatement->relation);
-		namespaceName = MemoryContextStrdup(relationContext, namespaceName);
-		createIndexStatement->relation->schemaname = namespaceName;
-
-		heap_close(relation, NoLock);
-
-		if (isDistributedRelation)
-		{
-			Oid namespaceId = InvalidOid;
-			Oid indexRelationId = InvalidOid;
-			char *indexName = createIndexStatement->idxname;
-
-			ErrorIfUnsupportedIndexStmt(createIndexStatement);
-
-			namespaceId = get_namespace_oid(namespaceName, false);
-			indexRelationId = get_relname_relid(indexName, namespaceId);
-
-			/* if index does not exist, send the command to workers */
-			if (!OidIsValid(indexRelationId))
-			{
-				DDLJob *ddlJob = palloc0(sizeof(DDLJob));
-				ddlJob->targetRelationId = relationId;
-				ddlJob->concurrentIndexCmd = createIndexStatement->concurrent;
-				ddlJob->commandString = createIndexCommand;
-				ddlJob->taskList = CreateIndexTaskList(relationId, createIndexStatement);
-
-				ddlJobs = list_make1(ddlJob);
-			}
-		}
-	}
-
-	return ddlJobs;
-}
-
-
-/*
  * PlanAlterTableStmt determines whether a given ALTER TABLE statement involves
  * a distributed table. If so (and if the statement does not use unsupported
  * options), it modifies the input statement to ensure proper execution against
@@ -1893,88 +1796,6 @@ ExtractNewExtensionVersion(Node *parsetree)
 
 
 /*
- * ErrorIfUnsupportedIndexStmt checks if the corresponding index statement is
- * supported for distributed tables and errors out if it is not.
- */
-static void
-ErrorIfUnsupportedIndexStmt(IndexStmt *createIndexStatement)
-{
-	char *indexRelationName = createIndexStatement->idxname;
-	if (indexRelationName == NULL)
-	{
-		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("creating index without a name on a distributed table is "
-							   "currently unsupported")));
-	}
-
-	if (createIndexStatement->tableSpace != NULL)
-	{
-		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						errmsg("specifying tablespaces with CREATE INDEX statements is "
-							   "currently unsupported")));
-	}
-
-	if (createIndexStatement->unique)
-	{
-		RangeVar *relation = createIndexStatement->relation;
-		bool missingOk = false;
-
-		/* caller uses ShareLock for non-concurrent indexes, use the same lock here */
-		LOCKMODE lockMode = ShareLock;
-		Oid relationId = RangeVarGetRelid(relation, lockMode, missingOk);
-		Var *partitionKey = DistPartitionKey(relationId);
-		char partitionMethod = PartitionMethod(relationId);
-		List *indexParameterList = NIL;
-		ListCell *indexParameterCell = NULL;
-		bool indexContainsPartitionColumn = false;
-
-		/*
-		 * Reference tables do not have partition key, and unique constraints
-		 * are allowed for them. Thus, we added a short-circuit for reference tables.
-		 */
-		if (partitionMethod == DISTRIBUTE_BY_NONE)
-		{
-			return;
-		}
-
-		if (partitionMethod == DISTRIBUTE_BY_APPEND)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("creating unique indexes on append-partitioned tables "
-								   "is currently unsupported")));
-		}
-
-		indexParameterList = createIndexStatement->indexParams;
-		foreach(indexParameterCell, indexParameterList)
-		{
-			IndexElem *indexElement = (IndexElem *) lfirst(indexParameterCell);
-			char *columnName = indexElement->name;
-			AttrNumber attributeNumber = InvalidAttrNumber;
-
-			/* column name is null for index expressions, skip it */
-			if (columnName == NULL)
-			{
-				continue;
-			}
-
-			attributeNumber = get_attnum(relationId, columnName);
-			if (attributeNumber == partitionKey->varattno)
-			{
-				indexContainsPartitionColumn = true;
-			}
-		}
-
-		if (!indexContainsPartitionColumn)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("creating unique indexes on non-partition "
-								   "columns is currently unsupported")));
-		}
-	}
-}
-
-
-/*
  * ErrorIfUnsupportedAlterTableStmt checks if the corresponding alter table
  * statement is supported for distributed tables and errors out if it is not.
  * Currently, only the following commands are supported.
@@ -2744,52 +2565,6 @@ DDLTaskList(Oid relationId, const char *commandString)
 		task->taskPlacementList = FinalizedShardPlacementList(shardId);
 
 		taskList = lappend(taskList, task);
-	}
-
-	return taskList;
-}
-
-
-/*
- * CreateIndexTaskList builds a list of tasks to execute a CREATE INDEX command
- * against a specified distributed table.
- */
-static List *
-CreateIndexTaskList(Oid relationId, IndexStmt *indexStmt)
-{
-	List *taskList = NIL;
-	List *shardIntervalList = LoadShardIntervalList(relationId);
-	ListCell *shardIntervalCell = NULL;
-	StringInfoData ddlString;
-	uint64 jobId = INVALID_JOB_ID;
-	int taskId = 1;
-
-	initStringInfo(&ddlString);
-
-	/* lock metadata before getting placement lists */
-	LockShardListMetadata(shardIntervalList, ShareLock);
-
-	foreach(shardIntervalCell, shardIntervalList)
-	{
-		ShardInterval *shardInterval = (ShardInterval *) lfirst(shardIntervalCell);
-		uint64 shardId = shardInterval->shardId;
-		Task *task = NULL;
-
-		deparse_shard_index_statement(indexStmt, relationId, shardId, &ddlString);
-
-		task = CitusMakeNode(Task);
-		task->jobId = jobId;
-		task->taskId = taskId++;
-		task->taskType = DDL_TASK;
-		task->queryString = pstrdup(ddlString.data);
-		task->replicationModel = REPLICATION_MODEL_INVALID;
-		task->dependedTaskList = NULL;
-		task->anchorShardId = shardId;
-		task->taskPlacementList = FinalizedShardPlacementList(shardId);
-
-		taskList = lappend(taskList, task);
-
-		resetStringInfo(&ddlString);
 	}
 
 	return taskList;

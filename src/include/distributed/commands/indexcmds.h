@@ -14,6 +14,8 @@
 
 #include "nodes/parsenodes.h"
 
+extern List * PlanIndexStmt(IndexStmt *createIndexStatement,
+							const char *createIndexCommand);
 extern List * PlanDropIndexStmt(DropStmt *dropIndexStatement,
 								const char *dropIndexCommand);
 
