@@ -10,6 +10,9 @@
 #ifndef MULTI_UTILITY_H
 #define MULTI_UTILITY_H
 
+#include "postgres.h"
+
+#include "utils/relcache.h"
 #include "tcop/utility.h"
 
 extern bool EnableDDLPropagation;

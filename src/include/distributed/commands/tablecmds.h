@@ -12,9 +12,16 @@
 #ifndef CITUS_TABLECMDS_H
 #define CITUS_TABLECMDS_H
 
+#include "c.h"
+
 #include "nodes/parsenodes.h"
 
 extern void ProcessDropTableStmt(DropStmt *dropTableStatement);
 extern void ProcessTruncateStatement(TruncateStmt *truncateStatement);
+extern List * PlanAlterTableStmt(AlterTableStmt *alterTableStatement,
+								 const char *alterTableCommand);
+extern Node * WorkerProcessAlterTableStmt(AlterTableStmt *alterTableStatement,
+										  const char *alterTableCommand);
+extern void ErrorIfAlterDropsPartitionColumn(AlterTableStmt *alterTableStatement);
 
 #endif /*CITUS_TABLECMDS_H */
