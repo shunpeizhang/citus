@@ -21,9 +21,11 @@
 #include "distributed/metadata_sync.h"
 #include "distributed/multi_executor.h"
 #include "distributed/multi_join_order.h"
+#include "distributed/multi_partitioning_utils.h"
 #include "distributed/reference_table_utils.h"
 #include "distributed/resource_lock.h"
 #include "distributed/transaction_management.h"
+#include "distributed/utility_hook.h"
 #include "nodes/parsenodes.h"
 #include "storage/lmgr.h"
 #include "utils/lsyscache.h"
@@ -39,6 +41,73 @@ static void ExecuteTruncateStmtSequentialIfNecessary(TruncateStmt *command);
 static void EnsurePartitionTableNotReplicatedForTruncate(TruncateStmt *truncateStatement);
 static void LockTruncatedRelationMetadataInWorkers(TruncateStmt *truncateStatement);
 static void AcquireDistributedLockOnRelations(List *relationIdList, LOCKMODE lockMode);
+
+
+/*
+ * ProcessDropTableStmt processes DROP TABLE commands for partitioned tables.
+ * If we are trying to DROP partitioned tables, we first need to go to MX nodes
+ * and DETACH partitions from their parents. Otherwise, we process DROP command
+ * multiple times in MX workers. For shards, we send DROP commands with IF EXISTS
+ * parameter which solves problem of processing same command multiple times.
+ * However, for distributed table itself, we directly remove related table from
+ * Postgres catalogs via performDeletion function, thus we need to be cautious
+ * about not processing same DROP command twice.
+ */
+void
+ProcessDropTableStmt(DropStmt *dropTableStatement)
+{
+	ListCell *dropTableCell = NULL;
+
+	Assert(dropTableStatement->removeType == OBJECT_TABLE);
+
+	foreach(dropTableCell, dropTableStatement->objects)
+	{
+		List *tableNameList = (List *) lfirst(dropTableCell);
+		RangeVar *tableRangeVar = makeRangeVarFromNameList(tableNameList);
+		bool missingOK = true;
+		List *partitionList = NIL;
+		ListCell *partitionCell = NULL;
+
+		Oid relationId = RangeVarGetRelid(tableRangeVar, AccessShareLock, missingOK);
+
+		/* we're not interested in non-valid, non-distributed relations */
+		if (relationId == InvalidOid || !IsDistributedTable(relationId))
+		{
+			continue;
+		}
+
+		/* invalidate foreign key cache if the table involved in any foreign key */
+		if ((TableReferenced(relationId) || TableReferencing(relationId)))
+		{
+			MarkInvalidateForeignKeyGraph();
+		}
+
+		/* we're only interested in partitioned and mx tables */
+		if (!ShouldSyncTableMetadata(relationId) || !PartitionedTable(relationId))
+		{
+			continue;
+		}
+
+		EnsureCoordinator();
+
+		partitionList = PartitionList(relationId);
+		if (list_length(partitionList) == 0)
+		{
+			continue;
+		}
+
+		SendCommandToWorkers(WORKERS_WITH_METADATA, DISABLE_DDL_PROPAGATION);
+
+		foreach(partitionCell, partitionList)
+		{
+			Oid partitionRelationId = lfirst_oid(partitionCell);
+			char *detachPartitionCommand =
+				GenerateDetachPartitionCommand(partitionRelationId);
+
+			SendCommandToWorkers(WORKERS_WITH_METADATA, detachPartitionCommand);
+		}
+	}
+}
 
 
 /*

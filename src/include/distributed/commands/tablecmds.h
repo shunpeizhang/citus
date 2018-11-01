@@ -14,6 +14,7 @@
 
 #include "nodes/parsenodes.h"
 
+extern void ProcessDropTableStmt(DropStmt *dropTableStatement);
 extern void ProcessTruncateStatement(TruncateStmt *truncateStatement);
 
 #endif /*CITUS_TABLECMDS_H */

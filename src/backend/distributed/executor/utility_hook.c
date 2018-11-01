@@ -179,7 +179,6 @@ static void PostProcessUtility(Node *parsetree);
 extern List * PlanGrantStmt(GrantStmt *grantStmt);
 static List * CollectGrantTableIdList(GrantStmt *grantStmt);
 static char * GetSchemaNameFromDropObject(ListCell *dropSchemaCell);
-static void ProcessDropTableStmt(DropStmt *dropTableStatement);
 static void ProcessDropSchemaStmt(DropStmt *dropSchemaStatement);
 static void InvalidateForeignKeyGraphForDDL(void);
 
@@ -839,6 +838,17 @@ ErrorUnsupportedAlterTableAddColumn(Oid relationId, AlterTableCmd *command,
 							  "one command is not supported because "
 							  "all constraints in Citus must have "
 							  "explicit names")));
+}
+
+
+/*
+ * MarkInvalidateForeignKeyGraph marks whether the foreign key graph should be
+ * invalidated due to a DDL.
+ */
+void
+MarkInvalidateForeignKeyGraph()
+{
+	shouldInvalidateForeignKeyGraph = true;
 }
 
 
@@ -2254,7 +2264,7 @@ ErrorIfUnsupportedAlterTableStmt(AlterTableStmt *alterTableStatement)
 
 				if (ConstraintIsAForeignKey(command->name, relationId))
 				{
-					shouldInvalidateForeignKeyGraph = true;
+					MarkInvalidateForeignKeyGraph();
 				}
 
 				break;
@@ -3558,7 +3568,7 @@ ProcessDropSchemaStmt(DropStmt *dropStatement)
 			/* invalidate foreign key cache if the table involved in any foreign key */
 			if (TableReferenced(relationId) || TableReferencing(relationId))
 			{
-				shouldInvalidateForeignKeyGraph = true;
+				MarkInvalidateForeignKeyGraph();
 
 				systable_endscan(scanDescriptor);
 				heap_close(pgClass, NoLock);
@@ -3593,73 +3603,6 @@ GetSchemaNameFromDropObject(ListCell *dropSchemaCell)
 #endif
 
 	return schemaString;
-}
-
-
-/*
- * ProcessDropTableStmt processes DROP TABLE commands for partitioned tables.
- * If we are trying to DROP partitioned tables, we first need to go to MX nodes
- * and DETACH partitions from their parents. Otherwise, we process DROP command
- * multiple times in MX workers. For shards, we send DROP commands with IF EXISTS
- * parameter which solves problem of processing same command multiple times.
- * However, for distributed table itself, we directly remove related table from
- * Postgres catalogs via performDeletion function, thus we need to be cautious
- * about not processing same DROP command twice.
- */
-static void
-ProcessDropTableStmt(DropStmt *dropTableStatement)
-{
-	ListCell *dropTableCell = NULL;
-
-	Assert(dropTableStatement->removeType == OBJECT_TABLE);
-
-	foreach(dropTableCell, dropTableStatement->objects)
-	{
-		List *tableNameList = (List *) lfirst(dropTableCell);
-		RangeVar *tableRangeVar = makeRangeVarFromNameList(tableNameList);
-		bool missingOK = true;
-		List *partitionList = NIL;
-		ListCell *partitionCell = NULL;
-
-		Oid relationId = RangeVarGetRelid(tableRangeVar, AccessShareLock, missingOK);
-
-		/* we're not interested in non-valid, non-distributed relations */
-		if (relationId == InvalidOid || !IsDistributedTable(relationId))
-		{
-			continue;
-		}
-
-		/* invalidate foreign key cache if the table involved in any foreign key */
-		if ((TableReferenced(relationId) || TableReferencing(relationId)))
-		{
-			shouldInvalidateForeignKeyGraph = true;
-		}
-
-		/* we're only interested in partitioned and mx tables */
-		if (!ShouldSyncTableMetadata(relationId) || !PartitionedTable(relationId))
-		{
-			continue;
-		}
-
-		EnsureCoordinator();
-
-		partitionList = PartitionList(relationId);
-		if (list_length(partitionList) == 0)
-		{
-			continue;
-		}
-
-		SendCommandToWorkers(WORKERS_WITH_METADATA, DISABLE_DDL_PROPAGATION);
-
-		foreach(partitionCell, partitionList)
-		{
-			Oid partitionRelationId = lfirst_oid(partitionCell);
-			char *detachPartitionCommand =
-				GenerateDetachPartitionCommand(partitionRelationId);
-
-			SendCommandToWorkers(WORKERS_WITH_METADATA, detachPartitionCommand);
-		}
-	}
 }
 
 

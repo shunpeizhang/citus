@@ -48,5 +48,6 @@ extern void ErrorIfUnsupportedConstraint(Relation relation, char distributionMet
 										 Var *distributionColumn, uint32 colocationId);
 
 extern const char * RoleSpecString(RoleSpec *spec);
+extern void MarkInvalidateForeignKeyGraph(void);
 
 #endif /* MULTI_UTILITY_H */
