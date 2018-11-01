@@ -348,7 +348,7 @@ IsTransmitStmt(Node *parsetree)
 			DefElem *defel = (DefElem *) lfirst(optionCell);
 
 			if (strncmp(defel->defname, "format", NAMEDATALEN) == 0 &&
-			    strncmp(defGetString(defel), "transmit", NAMEDATALEN) == 0)
+				strncmp(defGetString(defel), "transmit", NAMEDATALEN) == 0)
 			{
 				return true;
 			}
@@ -375,10 +375,10 @@ VerifyTransmitStmt(CopyStmt *copyStatement)
 
 	/* do some minimal option verification */
 	if (copyStatement->relation == NULL ||
-	    copyStatement->relation->relname == NULL)
+		copyStatement->relation->relname == NULL)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("FORMAT 'transmit' requires a target file")));
+						errmsg("FORMAT 'transmit' requires a target file")));
 	}
 
 	fileName = copyStatement->relation->relname;
@@ -386,28 +386,28 @@ VerifyTransmitStmt(CopyStmt *copyStatement)
 	if (is_absolute_path(fileName))
 	{
 		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				(errmsg("absolute path not allowed"))));
+						(errmsg("absolute path not allowed"))));
 	}
 	else if (!path_is_relative_and_below_cwd(fileName))
 	{
 		ereport(ERROR,
-		        (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				        (errmsg("path must be in or below the current directory"))));
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 (errmsg("path must be in or below the current directory"))));
 	}
 
 	if (copyStatement->filename != NULL)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("FORMAT 'transmit' only accepts STDIN/STDOUT"
-				       " as input/output")));
+						errmsg("FORMAT 'transmit' only accepts STDIN/STDOUT"
+							   " as input/output")));
 	}
 
 	if (copyStatement->query != NULL ||
-	    copyStatement->attlist != NULL ||
-	    copyStatement->is_program)
+		copyStatement->attlist != NULL ||
+		copyStatement->is_program)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("FORMAT 'transmit' does not accept query, attribute list"
-				       " or PROGRAM parameters ")));
+						errmsg("FORMAT 'transmit' does not accept query, attribute list"
+							   " or PROGRAM parameters ")));
 	}
 }
