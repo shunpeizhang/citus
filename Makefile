@@ -24,7 +24,7 @@ OBJS = src/backend/distributed/shared_library_init.o \
      src/backend/distributed/executor/multi_router_executor.o \
      src/backend/distributed/executor/multi_server_executor.o \
      src/backend/distributed/executor/multi_task_tracker_executor.o \
-     src/backend/distributed/executor/multi_utility.o \
+     src/backend/distributed/executor/utility_hook.o \
      src/backend/distributed/executor/query_stats.o \
      src/backend/distributed/executor/subplan_execution.o \
      src/backend/distributed/master/citus_create_restore_point.o \
