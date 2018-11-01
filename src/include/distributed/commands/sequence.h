@@ -17,4 +17,4 @@
 extern void ErrorIfUnsupportedSeqStmt(CreateSeqStmt *createSeqStmt);
 extern void ErrorIfDistributedAlterSeqOwnedBy(AlterSeqStmt *alterSeqStmt);
 
-#endif //CITUS_SEQUENCE_H
+#endif /*CITUS_SEQUENCE_H */

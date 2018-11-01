@@ -37,10 +37,10 @@ ErrorIfUnsupportedSeqStmt(CreateSeqStmt *createSeqStmt)
 		if (IsDistributedTable(ownedByTableId))
 		{
 			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					errmsg("cannot create sequences that specify a distributed "
-					       "table in their OWNED BY option"),
-					errhint("Use a sequence in a distributed table by specifying "
-					        "a serial column type before creating any shards.")));
+							errmsg("cannot create sequences that specify a distributed "
+								   "table in their OWNED BY option"),
+							errhint("Use a sequence in a distributed table by specifying "
+									"a serial column type before creating any shards.")));
 		}
 	}
 }
@@ -55,7 +55,7 @@ void
 ErrorIfDistributedAlterSeqOwnedBy(AlterSeqStmt *alterSeqStmt)
 {
 	Oid sequenceId = RangeVarGetRelid(alterSeqStmt->sequence, AccessShareLock,
-	                                  alterSeqStmt->missing_ok);
+									  alterSeqStmt->missing_ok);
 	bool sequenceOwned = false;
 	Oid ownedByTableId = InvalidOid;
 	Oid newOwnedByTableId = InvalidOid;
@@ -70,11 +70,11 @@ ErrorIfDistributedAlterSeqOwnedBy(AlterSeqStmt *alterSeqStmt)
 
 #if (PG_VERSION_NUM >= 100000)
 	sequenceOwned = sequenceIsOwned(sequenceId, DEPENDENCY_AUTO, &ownedByTableId,
-	                                &ownedByColumnId);
+									&ownedByColumnId);
 	if (!sequenceOwned)
 	{
 		sequenceOwned = sequenceIsOwned(sequenceId, DEPENDENCY_INTERNAL, &ownedByTableId,
-		                                &ownedByColumnId);
+										&ownedByColumnId);
 	}
 #else
 	sequenceOwned = sequenceIsOwned(sequenceId, &ownedByTableId, &ownedByColumnId);
@@ -92,17 +92,17 @@ ErrorIfDistributedAlterSeqOwnedBy(AlterSeqStmt *alterSeqStmt)
 		if (hasDistributedOwner && ownedByTableId != newOwnedByTableId)
 		{
 			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					errmsg("cannot alter OWNED BY option of a sequence "
-					       "already owned by a distributed table")));
+							errmsg("cannot alter OWNED BY option of a sequence "
+								   "already owned by a distributed table")));
 		}
 		else if (!hasDistributedOwner && IsDistributedTable(newOwnedByTableId))
 		{
 			/* and don't let local sequences get a distributed OWNED BY */
 			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					errmsg("cannot associate an existing sequence with a "
-					       "distributed table"),
-					errhint("Use a sequence in a distributed table by specifying "
-					        "a serial column type before creating any shards.")));
+							errmsg("cannot associate an existing sequence with a "
+								   "distributed table"),
+							errhint("Use a sequence in a distributed table by specifying "
+									"a serial column type before creating any shards.")));
 		}
 	}
 }
