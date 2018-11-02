@@ -17,7 +17,6 @@
 #include "access/htup_details.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_class.h"
-#include "catalog/pg_class_d.h"
 #include "distributed/commands/common.h"
 #include "distributed/commands/schemacmds.h"
 #include "distributed/foreign_constraint.h"

@@ -16,7 +16,6 @@
 #include "catalog/index.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_class.h"
-#include "catalog/pg_class_d.h"
 #include "distributed/citus_ruleutils.h"
 #include "distributed/commands/common.h"
 #include "distributed/commands/indexcmds.h"
