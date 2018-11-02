@@ -79,6 +79,7 @@ static void ExecuteDistributedDDLJob(DDLJob *ddlJob);
 static char * SetSearchPathToCurrentSearchPathCommand(void);
 static char * CurrentSearchPath(void);
 static void PostProcessUtility(Node *parsetree);
+static void PostProcessIndexStmt(IndexStmt *indexStmt);
 
 
 /*
@@ -866,15 +867,27 @@ CurrentSearchPath(void)
 
 /*
  * PostProcessUtility performs additional tasks after a utility's local portion
- * has been completed. Right now, the sole use is marking new indexes invalid
- * if they were created using the CONCURRENTLY flag. This (non-transactional)
- * change provides the fallback state if an error is raised, otherwise a sub-
- * sequent change to valid will be committed.
+ * has been completed.
  */
 static void
 PostProcessUtility(Node *parsetree)
 {
-	IndexStmt *indexStmt = NULL;
+	if (IsA(parsetree, IndexStmt))
+	{
+		PostProcessIndexStmt(castNode(IndexStmt, parsetree));
+	}
+}
+
+
+/*
+ * PostProcessIndexStmt marks new indexes invalid if they were created using the
+ * CONCURRENTLY flag. This (non-transactional) change provides the fallback
+ * state if an error is raised, otherwise a sub-sequent change to valid will be
+ * committed.
+ */
+static void
+PostProcessIndexStmt(IndexStmt *indexStmt)
+{
 	Relation relation = NULL;
 	Oid indexRelationId = InvalidOid;
 	Relation indexRelation = NULL;
@@ -882,20 +895,13 @@ PostProcessUtility(Node *parsetree)
 	HeapTuple indexTuple = NULL;
 	Form_pg_index indexForm = NULL;
 
-	/* only IndexStmts are processed */
-	if (!IsA(parsetree, IndexStmt))
-	{
-		return;
-	}
-
-	/* and even then only if they're CONCURRENT */
-	indexStmt = (IndexStmt *) parsetree;
+	/* we are only processing CONCURRENT index statements */
 	if (!indexStmt->concurrent)
 	{
 		return;
 	}
 
-	/* finally, this logic only applies to the coordinator */
+	/* this logic only applies to the coordinator */
 	if (!IsCoordinator())
 	{
 		return;
