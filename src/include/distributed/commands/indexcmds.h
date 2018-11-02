@@ -21,5 +21,6 @@ extern List * PlanIndexStmt(IndexStmt *createIndexStatement,
 							const char *createIndexCommand);
 extern List * PlanDropIndexStmt(DropStmt *dropIndexStatement,
 								const char *dropIndexCommand);
+extern void PostProcessIndexStmt(IndexStmt *indexStmt);
 
 #endif /*CITUS_INDEXCMDS_H */

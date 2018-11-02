@@ -11,6 +11,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/namespace.h"
@@ -20,6 +21,7 @@
 #include "distributed/commands/common.h"
 #include "distributed/commands/indexcmds.h"
 #include "distributed/distributed_planner.h"
+#include "distributed/master_protocol.h"
 #include "distributed/metadata_cache.h"
 #include "distributed/multi_physical_planner.h"
 #include "distributed/resource_lock.h"
@@ -257,6 +259,73 @@ PlanDropIndexStmt(DropStmt *dropIndexStatement, const char *dropIndexCommand)
 	}
 
 	return ddlJobs;
+}
+
+
+/*
+ * PostProcessIndexStmt marks new indexes invalid if they were created using the
+ * CONCURRENTLY flag. This (non-transactional) change provides the fallback
+ * state if an error is raised, otherwise a sub-sequent change to valid will be
+ * committed.
+ */
+void
+PostProcessIndexStmt(IndexStmt *indexStmt)
+{
+	Relation relation = NULL;
+	Oid indexRelationId = InvalidOid;
+	Relation indexRelation = NULL;
+	Relation pg_index = NULL;
+	HeapTuple indexTuple = NULL;
+	Form_pg_index indexForm = NULL;
+
+	/* we are only processing CONCURRENT index statements */
+	if (!indexStmt->concurrent)
+	{
+		return;
+	}
+
+	/* this logic only applies to the coordinator */
+	if (!IsCoordinator())
+	{
+		return;
+	}
+
+	/* commit the current transaction and start anew */
+	CommitTransactionCommand();
+	StartTransactionCommand();
+
+	/* get the affected relation and index */
+	relation = heap_openrv(indexStmt->relation, ShareUpdateExclusiveLock);
+	indexRelationId = get_relname_relid(indexStmt->idxname,
+										RelationGetNamespace(relation));
+	indexRelation = index_open(indexRelationId, RowExclusiveLock);
+
+	/* close relations but retain locks */
+	heap_close(relation, NoLock);
+	index_close(indexRelation, NoLock);
+
+	/* mark index as invalid, in-place (cannot be rolled back) */
+	index_set_state_flags(indexRelationId, INDEX_DROP_CLEAR_VALID);
+
+	/* re-open a transaction command from here on out */
+	CommitTransactionCommand();
+	StartTransactionCommand();
+
+	/* now, update index's validity in a way that can roll back */
+	pg_index = heap_open(IndexRelationId, RowExclusiveLock);
+
+	indexTuple = SearchSysCacheCopy1(INDEXRELID, ObjectIdGetDatum(indexRelationId));
+	Assert(HeapTupleIsValid(indexTuple)); /* better be present, we have lock! */
+
+	/* mark as valid, save, and update pg_index indexes */
+	indexForm = (Form_pg_index) GETSTRUCT(indexTuple);
+	indexForm->indisvalid = true;
+
+	CatalogTupleUpdate(pg_index, &indexTuple->t_self, indexTuple);
+
+	/* clean up; index now marked valid, but ROLLBACK will mark invalid */
+	heap_freetuple(indexTuple);
+	heap_close(pg_index, RowExclusiveLock);
 }
 
 
