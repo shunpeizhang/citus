@@ -144,6 +144,9 @@ static const struct config_enum_entry multi_shard_modify_connection_options[] = 
 void
 _PG_init(void)
 {
+	volatile char *stack_resizer = NULL;
+	long max_stack_depth_bytes = 0;
+
 	if (!process_shared_preload_libraries_in_progress)
 	{
 		ereport(ERROR, (errmsg("Citus can only be loaded via shared_preload_libraries"),
@@ -168,6 +171,17 @@ _PG_init(void)
 						errhint("Place citus at the beginning of "
 								"shared_preload_libraries.")));
 	}
+
+	/*
+	 * Stack size increase during high memory load may cause unexpected crashes.
+	 * With this alloca call, we are increasing stack size explicitly, so that if
+	 * it is not possible to increase stack size, we will get an OOM error instead
+	 * of a crash. Allocated memory will be automatically released at the end of
+	 * this function's scope.
+	 */
+	max_stack_depth_bytes = max_stack_depth * 1024L;
+	stack_resizer = alloca(max_stack_depth_bytes);
+	stack_resizer[max_stack_depth_bytes - 1] = 0;
 
 	/*
 	 * Extend the database directory structure before continuing with
