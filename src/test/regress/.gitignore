@@ -9,3 +9,4 @@
 # Regression test output
 /regression.diffs
 /regression.out
+/proxy.output
