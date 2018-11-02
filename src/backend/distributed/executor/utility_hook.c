@@ -124,7 +124,6 @@ static void ErrorIfUnsupportedRenameStmt(RenameStmt *renameStmt);
 static void ErrorIfUnsupportedAlterAddConstraintStmt(AlterTableStmt *alterTableStatement);
 
 /* Local functions forward declarations for helper functions */
-static bool IsIndexRenameStmt(RenameStmt *renameStmt);
 static void ExecuteDistributedDDLJob(DDLJob *ddlJob);
 static char * SetSearchPathToCurrentSearchPathCommand(void);
 static char * CurrentSearchPath(void);
@@ -963,26 +962,6 @@ ErrorIfUnsupportedRenameStmt(RenameStmt *renameStmt)
 						errmsg("renaming constraints belonging to distributed tables is "
 							   "currently unsupported")));
 	}
-}
-
-
-/*
- * IsIndexRenameStmt returns whether the passed-in RenameStmt is the following
- * form:
- *
- *   - ALTER INDEX RENAME
- */
-static bool
-IsIndexRenameStmt(RenameStmt *renameStmt)
-{
-	bool isIndexRenameStmt = false;
-
-	if (renameStmt->renameType == OBJECT_INDEX)
-	{
-		isIndexRenameStmt = true;
-	}
-
-	return isIndexRenameStmt;
 }
 
 

@@ -55,6 +55,26 @@ struct DropRelationCallbackState
 
 
 /*
+ * IsIndexRenameStmt returns whether the passed-in RenameStmt is the following
+ * form:
+ *
+ *   - ALTER INDEX RENAME
+ */
+bool
+IsIndexRenameStmt(RenameStmt *renameStmt)
+{
+	bool isIndexRenameStmt = false;
+
+	if (renameStmt->renameType == OBJECT_INDEX)
+	{
+		isIndexRenameStmt = true;
+	}
+
+	return isIndexRenameStmt;
+}
+
+
+/*
  * PlanIndexStmt determines whether a given CREATE INDEX statement involves
  * a distributed table. If so (and if the statement does not use unsupported
  * options), it modifies the input statement to ensure proper execution against

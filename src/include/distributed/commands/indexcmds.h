@@ -12,8 +12,11 @@
 #ifndef CITUS_INDEXCMDS_H
 #define CITUS_INDEXCMDS_H
 
+#include "c.h"
+
 #include "nodes/parsenodes.h"
 
+extern bool IsIndexRenameStmt(RenameStmt *renameStmt);
 extern List * PlanIndexStmt(IndexStmt *createIndexStatement,
 							const char *createIndexCommand);
 extern List * PlanDropIndexStmt(DropStmt *dropIndexStatement,
