@@ -14,7 +14,6 @@
 #include "distributed/commands/common.h"
 #include "distributed/commands/grant.h"
 #include "distributed/metadata_cache.h"
-#include "distributed/utility_hook.h"
 #include "distributed/version_compat.h"
 #include "lib/stringinfo.h"
 #include "nodes/parsenodes.h"

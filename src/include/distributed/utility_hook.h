@@ -35,6 +35,4 @@ extern void CitusProcessUtility(Node *node, const char *queryString,
 extern void ErrorIfUnsupportedConstraint(Relation relation, char distributionMethod,
 										 Var *distributionColumn, uint32 colocationId);
 
-extern const char * RoleSpecString(RoleSpec *spec);
-
 #endif /* MULTI_UTILITY_H */
