@@ -17,7 +17,7 @@
 #if (PG_VERSION_NUM >= 100000)
 #include "catalog/pg_sequence.h"
 #endif
-#include "commands/sequence.h"
+#include <commands/sequence.h>
 #include "lib/stringinfo.h"
 #include "nodes/parsenodes.h"
 #include "nodes/pg_list.h"

@@ -12,7 +12,7 @@
 #define VERSION_COMPAT_H
 
 #include "postgres.h"
-#include "commands/explain.h"
+#include <commands/explain.h>
 #include "catalog/namespace.h"
 #include "nodes/parsenodes.h"
 
