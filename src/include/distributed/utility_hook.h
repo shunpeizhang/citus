@@ -32,7 +32,5 @@ extern void multi_ProcessUtility9x(Node *parsetree, const char *queryString,
 extern void CitusProcessUtility(Node *node, const char *queryString,
 								ProcessUtilityContext context, ParamListInfo params,
 								DestReceiver *dest, char *completionTag);
-extern void ErrorIfUnsupportedConstraint(Relation relation, char distributionMethod,
-										 Var *distributionColumn, uint32 colocationId);
 
 #endif /* MULTI_UTILITY_H */

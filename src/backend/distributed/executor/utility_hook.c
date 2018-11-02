@@ -73,14 +73,12 @@ static List * PlanRenameStmt(RenameStmt *renameStmt, const char *renameCommand);
 
 /* Local functions forward declarations for unsupported command checks */
 static void ErrorIfUnsupportedRenameStmt(RenameStmt *renameStmt);
-static void ErrorIfUnsupportedAlterAddConstraintStmt(AlterTableStmt *alterTableStatement);
 
 /* Local functions forward declarations for helper functions */
 static void ExecuteDistributedDDLJob(DDLJob *ddlJob);
 static char * SetSearchPathToCurrentSearchPathCommand(void);
 static char * CurrentSearchPath(void);
 static void PostProcessUtility(Node *parsetree);
-static void PostProcessAlterTableStmt(AlterTableStmt *pStmt);
 
 
 /*
@@ -580,81 +578,6 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 }
 
 
-static void
-PostProcessAlterTableStmt(AlterTableStmt *alterTableStatement)
-{
-	List *commandList = alterTableStatement->cmds;
-	ListCell *commandCell = NULL;
-
-	foreach(commandCell, commandList)
-	{
-		AlterTableCmd *command = (AlterTableCmd *) lfirst(commandCell);
-		AlterTableType alterTableType = command->subtype;
-
-		if (alterTableType == AT_AddConstraint)
-		{
-			LOCKMODE lockmode = NoLock;
-			Oid relationId = InvalidOid;
-			Constraint *constraint = NULL;
-
-			Assert(list_length(commandList) == 1);
-
-			ErrorIfUnsupportedAlterAddConstraintStmt(alterTableStatement);
-
-			lockmode = AlterTableGetLockLevel(alterTableStatement->cmds);
-			relationId = AlterTableLookupRelation(alterTableStatement, lockmode);
-
-			if (!OidIsValid(relationId))
-			{
-				continue;
-			}
-
-			constraint = (Constraint *) command->def;
-			if (constraint->contype == CONSTR_FOREIGN)
-			{
-				InvalidateForeignKeyGraph();
-			}
-		}
-		else if (alterTableType == AT_AddColumn)
-		{
-			List *columnConstraints = NIL;
-			ListCell *columnConstraint = NULL;
-			Oid relationId = InvalidOid;
-			LOCKMODE lockmode = NoLock;
-
-			ColumnDef *columnDefinition = (ColumnDef *) command->def;
-			columnConstraints = columnDefinition->constraints;
-			if (columnConstraints)
-			{
-				ErrorIfUnsupportedAlterAddConstraintStmt(alterTableStatement);
-			}
-
-			lockmode = AlterTableGetLockLevel(alterTableStatement->cmds);
-			relationId = AlterTableLookupRelation(alterTableStatement, lockmode);
-			if (!OidIsValid(relationId))
-			{
-				continue;
-			}
-
-			foreach(columnConstraint, columnConstraints)
-			{
-				Constraint *constraint = (Constraint *) lfirst(columnConstraint);
-
-				if (constraint->conname == NULL &&
-					(constraint->contype == CONSTR_PRIMARY ||
-					 constraint->contype == CONSTR_UNIQUE ||
-					 constraint->contype == CONSTR_FOREIGN ||
-					 constraint->contype == CONSTR_CHECK))
-				{
-					ErrorUnsupportedAlterTableAddColumn(relationId, command,
-														constraint);
-				}
-			}
-		}
-	}
-}
-
-
 /*
  * PlanRenameStmt first determines whether a given rename statement involves
  * a distributed table. If so (and if it is supported, i.e. renames a column),
@@ -753,154 +676,6 @@ PlanRenameStmt(RenameStmt *renameStmt, const char *renameCommand)
 	ddlJob->taskList = DDLTaskList(tableRelationId, renameCommand);
 
 	return list_make1(ddlJob);
-}
-
-
-/*
- * ErrorIfUnsopprtedAlterAddConstraintStmt runs the constraint checks on distributed
- * table using the same logic with create_distributed_table.
- */
-static void
-ErrorIfUnsupportedAlterAddConstraintStmt(AlterTableStmt *alterTableStatement)
-{
-	LOCKMODE lockmode = AlterTableGetLockLevel(alterTableStatement->cmds);
-	Oid relationId = AlterTableLookupRelation(alterTableStatement, lockmode);
-	char distributionMethod = PartitionMethod(relationId);
-	Var *distributionColumn = DistPartitionKey(relationId);
-	uint32 colocationId = TableColocationId(relationId);
-	Relation relation = relation_open(relationId, ExclusiveLock);
-
-	ErrorIfUnsupportedConstraint(relation, distributionMethod, distributionColumn,
-								 colocationId);
-	relation_close(relation, NoLock);
-}
-
-
-/*
- * ErrorIfUnsupportedConstraint run checks related to unique index / exclude
- * constraints.
- *
- * The function skips the uniqeness checks for reference tables (i.e., distribution
- * method is 'none').
- *
- * Forbid UNIQUE, PRIMARY KEY, or EXCLUDE constraints on append partitioned
- * tables, since currently there is no way of enforcing uniqueness for
- * overlapping shards.
- *
- * Similarly, do not allow such constraints if they do not include partition
- * column. This check is important for two reasons:
- * i. First, currently Citus does not enforce uniqueness constraint on multiple
- * shards.
- * ii. Second, INSERT INTO .. ON CONFLICT (i.e., UPSERT) queries can be executed
- * with no further check for constraints.
- */
-void
-ErrorIfUnsupportedConstraint(Relation relation, char distributionMethod,
-							 Var *distributionColumn, uint32 colocationId)
-{
-	char *relationName = NULL;
-	List *indexOidList = NULL;
-	ListCell *indexOidCell = NULL;
-
-	/*
-	 * We first perform check for foreign constraints. It is important to do this check
-	 * before next check, because other types of constraints are allowed on reference
-	 * tables and we return early for those constraints thanks to next check. Therefore,
-	 * for reference tables, we first check for foreing constraints and if they are OK,
-	 * we do not error out for other types of constraints.
-	 */
-	ErrorIfUnsupportedForeignConstraint(relation, distributionMethod, distributionColumn,
-										colocationId);
-
-	/*
-	 * Citus supports any kind of uniqueness constraints for reference tables
-	 * given that they only consist of a single shard and we can simply rely on
-	 * Postgres.
-	 */
-	if (distributionMethod == DISTRIBUTE_BY_NONE)
-	{
-		return;
-	}
-
-	relationName = RelationGetRelationName(relation);
-	indexOidList = RelationGetIndexList(relation);
-
-	foreach(indexOidCell, indexOidList)
-	{
-		Oid indexOid = lfirst_oid(indexOidCell);
-		Relation indexDesc = index_open(indexOid, RowExclusiveLock);
-		IndexInfo *indexInfo = NULL;
-		AttrNumber *attributeNumberArray = NULL;
-		bool hasDistributionColumn = false;
-		int attributeCount = 0;
-		int attributeIndex = 0;
-
-		/* extract index key information from the index's pg_index info */
-		indexInfo = BuildIndexInfo(indexDesc);
-
-		/* only check unique indexes and exclusion constraints. */
-		if (indexInfo->ii_Unique == false && indexInfo->ii_ExclusionOps == NULL)
-		{
-			index_close(indexDesc, NoLock);
-			continue;
-		}
-
-		/*
-		 * Citus cannot enforce uniqueness/exclusion constraints with overlapping shards.
-		 * Thus, emit a warning for unique indexes and exclusion constraints on
-		 * append partitioned tables.
-		 */
-		if (distributionMethod == DISTRIBUTE_BY_APPEND)
-		{
-			ereport(WARNING, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							  errmsg("table \"%s\" has a UNIQUE or EXCLUDE constraint",
-									 relationName),
-							  errdetail("UNIQUE constraints, EXCLUDE constraints, "
-										"and PRIMARY KEYs on "
-										"append-partitioned tables cannot be enforced."),
-							  errhint("Consider using hash partitioning.")));
-		}
-
-		attributeCount = indexInfo->ii_NumIndexAttrs;
-		attributeNumberArray = IndexInfoAttributeNumberArray(indexInfo);
-
-		for (attributeIndex = 0; attributeIndex < attributeCount; attributeIndex++)
-		{
-			AttrNumber attributeNumber = attributeNumberArray[attributeIndex];
-			bool uniqueConstraint = false;
-			bool exclusionConstraintWithEquality = false;
-
-			if (distributionColumn->varattno != attributeNumber)
-			{
-				continue;
-			}
-
-			uniqueConstraint = indexInfo->ii_Unique;
-			exclusionConstraintWithEquality = (indexInfo->ii_ExclusionOps != NULL &&
-											   OperatorImplementsEquality(
-												   indexInfo->ii_ExclusionOps[
-													   attributeIndex]));
-
-			if (uniqueConstraint || exclusionConstraintWithEquality)
-			{
-				hasDistributionColumn = true;
-				break;
-			}
-		}
-
-		if (!hasDistributionColumn)
-		{
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("cannot create constraint on \"%s\"",
-								   relationName),
-							errdetail("Distributed relations cannot have UNIQUE, "
-									  "EXCLUDE, or PRIMARY KEY constraints that do not "
-									  "include the partition column (with an equality "
-									  "operator if EXCLUDE).")));
-		}
-
-		index_close(indexDesc, NoLock);
-	}
 }
 
 
