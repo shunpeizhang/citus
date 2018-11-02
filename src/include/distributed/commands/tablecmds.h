@@ -24,6 +24,9 @@ extern List * PlanAlterTableStmt(AlterTableStmt *alterTableStatement,
 								 const char *alterTableCommand);
 extern Node * WorkerProcessAlterTableStmt(AlterTableStmt *alterTableStatement,
 										  const char *alterTableCommand);
+extern bool IsAlterTableRenameStmt(RenameStmt *renameStmt);
 extern void ErrorIfAlterDropsPartitionColumn(AlterTableStmt *alterTableStatement);
+extern void ErrorUnsupportedAlterTableAddColumn(Oid relationId, AlterTableCmd *command,
+												Constraint *constraint);
 
 #endif /*CITUS_TABLECMDS_H */
