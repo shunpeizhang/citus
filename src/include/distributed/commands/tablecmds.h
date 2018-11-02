@@ -18,6 +18,8 @@
 
 extern void ProcessDropTableStmt(DropStmt *dropTableStatement);
 extern void ProcessTruncateStatement(TruncateStmt *truncateStatement);
+extern void ProcessCreateTableStmtPartitionOf(CreateStmt *createStatement);
+extern void ProcessAlterTableStmtAttachPartition(AlterTableStmt *alterTableStatement);
 extern List * PlanAlterTableStmt(AlterTableStmt *alterTableStatement,
 								 const char *alterTableCommand);
 extern Node * WorkerProcessAlterTableStmt(AlterTableStmt *alterTableStatement,

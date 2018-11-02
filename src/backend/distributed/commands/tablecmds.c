@@ -147,6 +147,135 @@ ProcessTruncateStatement(TruncateStmt *truncateStatement)
 
 
 /*
+ * ProcessCreateTableStmtPartitionOf takes CreateStmt object as a parameter but
+ * it only processes CREATE TABLE ... PARTITION OF statements and it checks if
+ * user creates the table as a partition of a distributed table. In that case,
+ * it distributes partition as well. Since the table itself is a partition,
+ * CreateDistributedTable will attach it to its parent table automatically after
+ * distributing it.
+ *
+ * This function does nothing if PostgreSQL's version is less then 10 and given
+ * CreateStmt is not a CREATE TABLE ... PARTITION OF command.
+ */
+void
+ProcessCreateTableStmtPartitionOf(CreateStmt *createStatement)
+{
+#if (PG_VERSION_NUM >= 100000)
+	if (createStatement->inhRelations != NIL && createStatement->partbound != NULL)
+	{
+		RangeVar *parentRelation = linitial(createStatement->inhRelations);
+		bool parentMissingOk = false;
+		Oid parentRelationId = RangeVarGetRelid(parentRelation, NoLock,
+												parentMissingOk);
+
+		/* a partition can only inherit from single parent table */
+		Assert(list_length(createStatement->inhRelations) == 1);
+
+		Assert(parentRelationId != InvalidOid);
+
+		/*
+		 * If a partition is being created and if its parent is a distributed
+		 * table, we will distribute this table as well.
+		 */
+		if (IsDistributedTable(parentRelationId))
+		{
+			bool missingOk = false;
+			Oid relationId = RangeVarGetRelid(createStatement->relation, NoLock,
+											  missingOk);
+			Var *parentDistributionColumn = DistPartitionKey(parentRelationId);
+			char parentDistributionMethod = DISTRIBUTE_BY_HASH;
+			char *parentRelationName = generate_qualified_relation_name(parentRelationId);
+			bool viaDeprecatedAPI = false;
+
+			CreateDistributedTable(relationId, parentDistributionColumn,
+								   parentDistributionMethod, parentRelationName,
+								   viaDeprecatedAPI);
+		}
+	}
+#endif
+}
+
+
+/*
+ * ProcessAlterTableStmtAttachPartition takes AlterTableStmt object as parameter
+ * but it only processes into ALTER TABLE ... ATTACH PARTITION commands and
+ * distributes the partition if necessary. There are four cases to consider;
+ *
+ * Parent is not distributed, partition is not distributed: We do not need to
+ * do anything in this case.
+ *
+ * Parent is not distributed, partition is distributed: This can happen if
+ * user first distributes a table and tries to attach it to a non-distributed
+ * table. Non-distributed tables cannot have distributed partitions, thus we
+ * simply error out in this case.
+ *
+ * Parent is distributed, partition is not distributed: We should distribute
+ * the table and attach it to its parent in workers. CreateDistributedTable
+ * perform both of these operations. Thus, we will not propagate ALTER TABLE
+ * ... ATTACH PARTITION command to workers.
+ *
+ * Parent is distributed, partition is distributed: Partition is already
+ * distributed, we only need to attach it to its parent in workers. Attaching
+ * operation will be performed via propagating this ALTER TABLE ... ATTACH
+ * PARTITION command to workers.
+ *
+ * This function does nothing if PostgreSQL's version is less then 10 and given
+ * CreateStmt is not a ALTER TABLE ... ATTACH PARTITION OF command.
+ */
+void
+ProcessAlterTableStmtAttachPartition(AlterTableStmt *alterTableStatement)
+{
+#if (PG_VERSION_NUM >= 100000)
+	List *commandList = alterTableStatement->cmds;
+	ListCell *commandCell = NULL;
+
+	foreach(commandCell, commandList)
+	{
+		AlterTableCmd *alterTableCommand = (AlterTableCmd *) lfirst(commandCell);
+
+		if (alterTableCommand->subtype == AT_AttachPartition)
+		{
+			Oid relationId = AlterTableLookupRelation(alterTableStatement, NoLock);
+			PartitionCmd *partitionCommand = (PartitionCmd *) alterTableCommand->def;
+			bool partitionMissingOk = false;
+			Oid partitionRelationId = RangeVarGetRelid(partitionCommand->name, NoLock,
+													   partitionMissingOk);
+
+			/*
+			 * If user first distributes the table then tries to attach it to non
+			 * distributed table, we error out.
+			 */
+			if (!IsDistributedTable(relationId) &&
+				IsDistributedTable(partitionRelationId))
+			{
+				char *parentRelationName = get_rel_name(partitionRelationId);
+
+				ereport(ERROR, (errmsg("non-distributed tables cannot have "
+									   "distributed partitions"),
+								errhint("Distribute the partitioned table \"%s\" "
+										"instead", parentRelationName)));
+			}
+
+			/* if parent of this table is distributed, distribute this table too */
+			if (IsDistributedTable(relationId) &&
+				!IsDistributedTable(partitionRelationId))
+			{
+				Var *distributionColumn = DistPartitionKey(relationId);
+				char distributionMethod = DISTRIBUTE_BY_HASH;
+				char *parentRelationName = generate_qualified_relation_name(relationId);
+				bool viaDeprecatedAPI = false;
+
+				CreateDistributedTable(partitionRelationId, distributionColumn,
+									   distributionMethod, parentRelationName,
+									   viaDeprecatedAPI);
+			}
+		}
+	}
+#endif
+}
+
+
+/*
  * PlanAlterTableStmt determines whether a given ALTER TABLE statement involves
  * a distributed table. If so (and if the statement does not use unsupported
  * options), it modifies the input statement to ensure proper execution against
