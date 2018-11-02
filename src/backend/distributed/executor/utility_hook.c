@@ -121,8 +121,6 @@ static bool IsCitusExtensionStmt(Node *parsetree);
 static void ProcessCreateTableStmtPartitionOf(CreateStmt *createStatement);
 static void ProcessAlterTableStmtAttachPartition(AlterTableStmt *alterTableStatement);
 static List * PlanRenameStmt(RenameStmt *renameStmt, const char *renameCommand);
-static List * PlanAlterObjectSchemaStmt(AlterObjectSchemaStmt *alterObjectSchemaStmt,
-										const char *alterObjectSchemaCommand);
 
 
 /* Local functions forward declarations for unsupported command checks */
@@ -1044,43 +1042,6 @@ PlanRenameStmt(RenameStmt *renameStmt, const char *renameCommand)
 	ddlJob->taskList = DDLTaskList(tableRelationId, renameCommand);
 
 	return list_make1(ddlJob);
-}
-
-
-/*
- * PlanAlterObjectSchemaStmt determines whether a given ALTER ... SET SCHEMA
- * statement involves a distributed table and issues a warning if so. Because
- * we do not support distributed ALTER ... SET SCHEMA, this function always
- * returns NIL.
- */
-static List *
-PlanAlterObjectSchemaStmt(AlterObjectSchemaStmt *alterObjectSchemaStmt,
-						  const char *alterObjectSchemaCommand)
-{
-	Oid relationId = InvalidOid;
-
-	if (alterObjectSchemaStmt->relation == NULL)
-	{
-		return NIL;
-	}
-
-	relationId = RangeVarGetRelid(alterObjectSchemaStmt->relation,
-								  AccessExclusiveLock,
-								  alterObjectSchemaStmt->missing_ok);
-
-	/* first check whether a distributed relation is affected */
-	if (!OidIsValid(relationId) || !IsDistributedTable(relationId))
-	{
-		return NIL;
-	}
-
-	/* emit a warning if a distributed relation is affected */
-	ereport(WARNING, (errmsg("not propagating ALTER ... SET SCHEMA commands to "
-							 "worker nodes"),
-					  errhint("Connect to worker nodes directly to manually "
-							  "change schemas of affected objects.")));
-
-	return NIL;
 }
 
 

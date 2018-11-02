@@ -15,5 +15,7 @@
 #include "nodes/parsenodes.h"
 
 extern void ProcessDropSchemaStmt(DropStmt *dropSchemaStatement);
+extern List * PlanAlterObjectSchemaStmt(AlterObjectSchemaStmt *alterObjectSchemaStmt,
+										const char *alterObjectSchemaCommand);
 
 #endif /*CITUS_SCHEMACMDS_H */

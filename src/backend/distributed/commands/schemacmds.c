@@ -103,6 +103,43 @@ ProcessDropSchemaStmt(DropStmt *dropStatement)
 
 
 /*
+ * PlanAlterObjectSchemaStmt determines whether a given ALTER ... SET SCHEMA
+ * statement involves a distributed table and issues a warning if so. Because
+ * we do not support distributed ALTER ... SET SCHEMA, this function always
+ * returns NIL.
+ */
+List *
+PlanAlterObjectSchemaStmt(AlterObjectSchemaStmt *alterObjectSchemaStmt,
+						  const char *alterObjectSchemaCommand)
+{
+	Oid relationId = InvalidOid;
+
+	if (alterObjectSchemaStmt->relation == NULL)
+	{
+		return NIL;
+	}
+
+	relationId = RangeVarGetRelid(alterObjectSchemaStmt->relation,
+								  AccessExclusiveLock,
+								  alterObjectSchemaStmt->missing_ok);
+
+	/* first check whether a distributed relation is affected */
+	if (!OidIsValid(relationId) || !IsDistributedTable(relationId))
+	{
+		return NIL;
+	}
+
+	/* emit a warning if a distributed relation is affected */
+	ereport(WARNING, (errmsg("not propagating ALTER ... SET SCHEMA commands to "
+							 "worker nodes"),
+					  errhint("Connect to worker nodes directly to manually "
+							  "change schemas of affected objects.")));
+
+	return NIL;
+}
+
+
+/*
  * GetSchemaNameFromDropObject gets the name of the drop schema from given
  * list cell. This function is defined due to API change between PG 9.6 and
  * PG 10.
