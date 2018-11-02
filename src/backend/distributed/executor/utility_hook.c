@@ -80,6 +80,7 @@ static void ExecuteDistributedDDLJob(DDLJob *ddlJob);
 static char * SetSearchPathToCurrentSearchPathCommand(void);
 static char * CurrentSearchPath(void);
 static void PostProcessUtility(Node *parsetree);
+static void PostProcessAlterTableStmt(AlterTableStmt *pStmt);
 
 
 /*
@@ -521,76 +522,7 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 		 */
 		if (IsA(parsetree, AlterTableStmt))
 		{
-			AlterTableStmt *alterTableStatement = (AlterTableStmt *) parsetree;
-			List *commandList = alterTableStatement->cmds;
-			ListCell *commandCell = NULL;
-
-			foreach(commandCell, commandList)
-			{
-				AlterTableCmd *command = (AlterTableCmd *) lfirst(commandCell);
-				AlterTableType alterTableType = command->subtype;
-
-				if (alterTableType == AT_AddConstraint)
-				{
-					LOCKMODE lockmode = NoLock;
-					Oid relationId = InvalidOid;
-					Constraint *constraint = NULL;
-
-					Assert(list_length(commandList) == 1);
-
-					ErrorIfUnsupportedAlterAddConstraintStmt(alterTableStatement);
-
-					lockmode = AlterTableGetLockLevel(alterTableStatement->cmds);
-					relationId = AlterTableLookupRelation(alterTableStatement, lockmode);
-
-					if (!OidIsValid(relationId))
-					{
-						continue;
-					}
-
-					constraint = (Constraint *) command->def;
-					if (constraint->contype == CONSTR_FOREIGN)
-					{
-						InvalidateForeignKeyGraph();
-					}
-				}
-				else if (alterTableType == AT_AddColumn)
-				{
-					List *columnConstraints = NIL;
-					ListCell *columnConstraint = NULL;
-					Oid relationId = InvalidOid;
-					LOCKMODE lockmode = NoLock;
-
-					ColumnDef *columnDefinition = (ColumnDef *) command->def;
-					columnConstraints = columnDefinition->constraints;
-					if (columnConstraints)
-					{
-						ErrorIfUnsupportedAlterAddConstraintStmt(alterTableStatement);
-					}
-
-					lockmode = AlterTableGetLockLevel(alterTableStatement->cmds);
-					relationId = AlterTableLookupRelation(alterTableStatement, lockmode);
-					if (!OidIsValid(relationId))
-					{
-						continue;
-					}
-
-					foreach(columnConstraint, columnConstraints)
-					{
-						Constraint *constraint = (Constraint *) lfirst(columnConstraint);
-
-						if (constraint->conname == NULL &&
-							(constraint->contype == CONSTR_PRIMARY ||
-							 constraint->contype == CONSTR_UNIQUE ||
-							 constraint->contype == CONSTR_FOREIGN ||
-							 constraint->contype == CONSTR_CHECK))
-						{
-							ErrorUnsupportedAlterTableAddColumn(relationId, command,
-																constraint);
-						}
-					}
-				}
-			}
+			PostProcessAlterTableStmt(castNode(AlterTableStmt, parsetree));
 		}
 
 		foreach(ddlJobCell, ddlJobs)
@@ -645,6 +577,81 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 	 * EXTENSION. This is important to register some invalidation callbacks.
 	 */
 	CitusHasBeenLoaded();
+}
+
+
+static void
+PostProcessAlterTableStmt(AlterTableStmt *alterTableStatement)
+{
+	List *commandList = alterTableStatement->cmds;
+	ListCell *commandCell = NULL;
+
+	foreach(commandCell, commandList)
+	{
+		AlterTableCmd *command = (AlterTableCmd *) lfirst(commandCell);
+		AlterTableType alterTableType = command->subtype;
+
+		if (alterTableType == AT_AddConstraint)
+		{
+			LOCKMODE lockmode = NoLock;
+			Oid relationId = InvalidOid;
+			Constraint *constraint = NULL;
+
+			Assert(list_length(commandList) == 1);
+
+			ErrorIfUnsupportedAlterAddConstraintStmt(alterTableStatement);
+
+			lockmode = AlterTableGetLockLevel(alterTableStatement->cmds);
+			relationId = AlterTableLookupRelation(alterTableStatement, lockmode);
+
+			if (!OidIsValid(relationId))
+			{
+				continue;
+			}
+
+			constraint = (Constraint *) command->def;
+			if (constraint->contype == CONSTR_FOREIGN)
+			{
+				InvalidateForeignKeyGraph();
+			}
+		}
+		else if (alterTableType == AT_AddColumn)
+		{
+			List *columnConstraints = NIL;
+			ListCell *columnConstraint = NULL;
+			Oid relationId = InvalidOid;
+			LOCKMODE lockmode = NoLock;
+
+			ColumnDef *columnDefinition = (ColumnDef *) command->def;
+			columnConstraints = columnDefinition->constraints;
+			if (columnConstraints)
+			{
+				ErrorIfUnsupportedAlterAddConstraintStmt(alterTableStatement);
+			}
+
+			lockmode = AlterTableGetLockLevel(alterTableStatement->cmds);
+			relationId = AlterTableLookupRelation(alterTableStatement, lockmode);
+			if (!OidIsValid(relationId))
+			{
+				continue;
+			}
+
+			foreach(columnConstraint, columnConstraints)
+			{
+				Constraint *constraint = (Constraint *) lfirst(columnConstraint);
+
+				if (constraint->conname == NULL &&
+					(constraint->contype == CONSTR_PRIMARY ||
+					 constraint->contype == CONSTR_UNIQUE ||
+					 constraint->contype == CONSTR_FOREIGN ||
+					 constraint->contype == CONSTR_CHECK))
+				{
+					ErrorUnsupportedAlterTableAddColumn(relationId, command,
+														constraint);
+				}
+			}
+		}
+	}
 }
 
 
